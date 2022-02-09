@@ -1,5 +1,5 @@
 # QOIG
-Fast streaming PNG&lt;->QOI converter with some compression-improving extensions
+Fast streaming PNG&lt;->QOI converter with some compression-improving extensions. Can achieve 1%-10% better compression than QOI without sacrificing performance.
 
 ## DEPENDS ON
 libspng <https://github.com/randy408/libspng/> (tested on version 0.7.1) using miniz (https://github.com/richgel999/miniz)
