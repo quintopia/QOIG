@@ -19,5 +19,4 @@ See qoig.h
 Coming later
 
 ## FUTURE STUFF?
-- pre-populate near-match cache with all web-safe colors (or at least as many as do not collide)
 - fastmod calculation for hash functions?
