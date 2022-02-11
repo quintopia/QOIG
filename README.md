@@ -16,7 +16,9 @@ I use `gcc -O3 qoigconv.c -o qoigconv spng.o miniz.o -lm` where spng was compile
 See qoig.h
 
 ## FULL RATIONALE
-Coming later
+See <https://esolang.rutteric.com/qoig.html>
 
 ## FUTURE STUFF?
 - fastmod calculation for hash functions?
+- better long cache hash?
+- animated qoig?
