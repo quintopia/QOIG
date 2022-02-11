@@ -18,14 +18,14 @@ static char args_doc[] =
   "filename_to_convert filename_for_result";
 /* The options we understand. */
 static struct argp_option options[] = {
-  {"plainqoi", 'q', 0, OPTION_ARG_OPTIONAL, "Use options for plain backwards-compatible QOI" },
-  {"maxcomp", 'm', 0, OPTION_ARG_OPTIONAL, "Try to produce smallest QOIG file (slow)" },
-  {"fast", 'f', 0, OPTION_ARG_OPTIONAL, "Use settings that tend to be pretty good in most situations"},
+  {"plainqoi", 'q', 0, 0, "Use options for plain backwards-compatible QOI" },
+  {"maxcomp", 'm', "clen", OPTION_ARG_OPTIONAL, "Max compression. Equiv. to -cclen -irs. If clen omitted, use -n31 (slow)." },
+  {"fast", 'f', "clen", OPTION_ARG_OPTIONAL, "Good fast compression. Equiv. to -cclen -ir. clen defaults to 26."},
   {"cachesize", 'c', "clen", OPTION_ARG_OPTIONAL, "Set size of exact-match cache (0<=clen<=30)" },
   {"simnum", 'n', "num", OPTION_ARG_OPTIONAL, "Set number of cache lengths to test (0<=num<=31) for best compression (higher is slower)" },
-  {"longruns", 'r', 0, OPTION_ARG_OPTIONAL, "Use extra compression on long runs"},
-  {"longindex", 'i', 0, OPTION_ARG_OPTIONAL, "Use larger secondary color caches"},
-  {"search", 's', 0, OPTION_ARG_OPTIONAL, "Search entire local cache for similar colors (slower but slight compression improvement)"},
+  {"longruns", 'r', 0, 0, "Use extra compression on long runs"},
+  {"longindex", 'i', 0, 0, "Use larger secondary color caches"},
+  {"search", 's', 0, 0, "Search entire local cache for similar colors (slower but slight compression improvement)"},
   { 0 }
 };
 struct arguments
@@ -48,7 +48,14 @@ static error_t parse_opt (int key, char *arg, struct argp_state *state) {
             break;
         case 'm':
             if (!arguments->plainqoi) {
-                arguments->simnum = 31;
+                if (arg!=NULL) {
+                    arguments->clen = atoi(arg);
+                    if (arguments->clen<0||arguments->clen>30) {
+                        argp_error(state,"Cache length must be in the range 0 to 30.");
+                    }
+                } else {
+                    arguments->simnum = 31;
+                }
                 arguments->longruns = 1;
                 arguments->longindex = 1;
                 arguments->search = 1;
@@ -56,7 +63,14 @@ static error_t parse_opt (int key, char *arg, struct argp_state *state) {
             break;
         case 'f':
             if (!arguments->plainqoi) {
-                arguments->clen = 26;
+                if (arg!=NULL) {
+                    arguments->clen = atoi(arg);
+                    if (arguments->clen<0||arguments->clen>30) {
+                        argp_error(state,"Cache length must be in the range 0 to 30.");
+                    }
+                } else {
+                    arguments->clen = 26;
+                }
                 arguments->longruns = 1;
                 arguments->longindex = 1;
             }
@@ -73,12 +87,14 @@ static error_t parse_opt (int key, char *arg, struct argp_state *state) {
             }
             break;
         case 'n':
-            if (arg == NULL) {
-                argp_error(state,"No argument provided for number of cache lengths to try.");
-            }
-            arguments->simnum = atoi(arg);
-            if (arguments->simnum<0||arguments->simnum>31) {
-                argp_error(state,"Number of cache lengths to try must be in the range 0 to 31.");
+            if (!arguments->plainqoi) {
+                 if (arg == NULL) {
+                    argp_error(state,"No argument provided for number of cache lengths to try.");
+                }
+                arguments->simnum = atoi(arg);
+                if (arguments->simnum<0||arguments->simnum>31) {
+                    argp_error(state,"Number of cache lengths to try must be in the range 0 to 31.");
+                }
             }
             break;
         case 'r':
@@ -148,6 +164,7 @@ int main(int argc, char **argv) {
         bestclen = arguments.clen;
         cfg.simulate = 1;
         for (i=0;i<arguments.simnum;i++) {
+            if (cfg.longindex && i==6) continue;
             cfg.clen = a236206[i];
             size = qoig_write(arguments.filenames[0],arguments.filenames[1],cfg);
             if (size<compsize) {
