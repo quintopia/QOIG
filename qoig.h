@@ -20,6 +20,7 @@
   1. split cache with near-match section
   2. long runs
   3. secondary cache 
+  4. raw blocks (rgb runs)
 
   1. SPLIT CACHE
   The first difference is that the cache can be split into two parts.
@@ -43,8 +44,8 @@
 
   The optimal place to split the cache between these two parts depends
   on the content of the image being compressed, so the lower 5 bits of
-  the fourth byte of the file are now used to encode this place (with 
-  a bias of 7). Setting the cache length parameter to 30 reproduces the 
+  the fourth byte of the file are now used to encode this place (xored
+  with 24). Setting the cache length parameter to 30 reproduces the 
   caching behavior of QOI.
   
   2. LONG RUNS
@@ -95,6 +96,25 @@
   NB: When cache length parameter is set to 30 and longruns and longindex are both
   disabled, the fourth byte of the file will be "f", exactly as in plain QOI, thus
   ensuring all QOI files are valid QOIG files.
+  
+  4. RAW BLOCKS (RGB/RGBA RUNS)
+  This extension replaces runs of consecutive OP_RGB or OP_RGBA with a new opcode,
+  OP_RGBRUN, which marks off an entire block of the encoding as raw RGB or RGBA color
+  data. The byte following this new opcode indicates whether the alpha data is included
+  and how many colors the block contains, up to 129 (encoded with a bias of 2). 
+  Immediately following these two bytes is a run of data so described containing only 
+  pixel colors 3 or 4 bytes at a time with no intervening byte codes. The two byte 
+  marker at the beginning of this block looks like this:
+  
+  ┌─ OP_RGBRUN ────────────┬────────────────────────┐
+  │         Byte[0]        │         Byte[1]        │
+  │ 7  6  5  4  3  2  1  0 │ 7  6  5  4  3  2  1  0 │
+  │────────────────────────┼───┼────────────────────│
+  │ 0  1  1  0  1  0  1  0 │ t │  length of run - 2 │
+  └────────────────────────┴───┴────────────────────┘
+  
+  The third most significant bit of the fourth byte of the file is set to DISable 
+  this feature.
   */
 #include <string.h>
 #include <arpa/inet.h>
@@ -115,6 +135,7 @@
 #define IS_BIG_ENDIAN ((color){ .rgba = 1 }.alpha)
 #define OP_RGB (uint8_t)0xFE
 #define OP_RGBA (uint8_t)0xFF
+#define OP_RGBRUN (uint8_t)0x6A
 #define OP_INDEX (uint8_t)0
 #define OP_DIFF (uint8_t)0x40
 #define OP_LUMA (uint8_t)0x80
@@ -125,7 +146,7 @@
 #define OP_INDEX_ARG (uint8_t)0x3F
 #define HASH(C,H) ((C.red*3+C.green*5+C.blue*7+C.alpha*11)%H)
 #define LHASH(C) ((23*C.red+29*C.green+59*C.blue+197*C.alpha)&0xFF)
-#define LRS(a,b) ((unsigned)a>>b)
+#define LRS(a,b) ((unsigned)(a)>>b)
 #define LOCALHASH(C,H,L) (H+(LRS(C.red+8,3)*37+LRS(C.green+8,3)*59+\
                      LRS(C.blue+8,3)*67)%(L-H))
 #define TUBITRANGE(a,b) ((char)(a-b)>-3 && (char)(a-b)<2)
@@ -134,7 +155,23 @@
                          TUBITRANGE(a.blue,b.blue)
 #define EQCOLOR(a,b) (a.red == b.red && a.green == b.green && \
                        a.blue == b.blue && a.alpha == b.alpha)
-#define QOIG_PRINT(b) if (!cfg.simulate) fprintf(outfile,"%c",b);\
+#define QOIG_PRINT(b) if (bufferedrgb && !rgbrun) {\
+                          if (!cfg.simulate) {\
+                              fprintf(outfile,"%c",bufferedrgb);\
+                              fwrite(&last,1,3+(bufferedrgb&1),outfile);\
+                          }\
+                          ct+=4+(bufferedrgb&1);\
+                          bufferedrgb = 0;\
+                      } else if (rgbrun) {\
+                          if (!cfg.simulate) {\
+                              fprintf(outfile,"%c%c",OP_RGBRUN,rgbrun-2|(bufferedrgb&1)<<7);\
+                              fwrite(rgbbuffer,1,rgbrun*(bufferedrgb-0xFB),outfile);\
+                          }\
+                          ct+=2+rgbrun*(bufferedrgb-0xFB);\
+                          rgbrun=0;\
+                          bufferedrgb=0;\
+                      }\
+                      if (!cfg.simulate) fprintf(outfile,"%c",b);\
                       ct++
 #define QOIG_READ(a,b,c,d) if (fread(a,b,c,d)!=c) return -1
 
@@ -163,6 +200,7 @@ typedef struct {
     unsigned char simulate;
     unsigned char channels;
     unsigned char longindex;
+    unsigned char rawblocks;
 } qoig_cfg;
 static color default_colors_be[256] = {
 0x0000ffff,0xffcc33ff,0x003300ff,0x66cc66ff,0x993399ff,0xffccffff,0x0033ccff,0xffff00ff,
@@ -302,17 +340,21 @@ int qoig_encode(spng_ctx *ctx, size_t width, FILE *outfile, unsigned long *outle
     color cache[64] = {0};
     color longcache1[256];
     color longcache2[256];
+    color row[width];
+    uint8_t rgbbuffer[516];
     color last;
     color current = (color){.alpha=255};
     color temp,temp2;
     int i,j;
-    char k,l,m;
+    char k,l;
+    uint8_t m;
     uint8_t lastrow = 0;
     uint8_t ret,done;
+    uint8_t bufferedrgb = 0;
+    uint8_t rgbrun = 0;
     uint32_t run = 0;
     unsigned long ct = 0;
     int rows_read = 0;
-    char *row = malloc(4*width);
     uint8_t colorhash,lcolorhash;
     int cachelengths[31] = QOIG_CACHES;
     int clen;
@@ -330,26 +372,30 @@ int qoig_encode(spng_ctx *ctx, size_t width, FILE *outfile, unsigned long *outle
             memcpy(longcache2,default_colors2_le,256*sizeof(color));
         }
     }
+    if (clen) {
+        cache[HASH(current,clen)] = current;
+        if (cfg.longindex) longcache1[LHASH(current)] = current;
+    }
     /*spng_decode_row is a bad API. a sane API would return 0 after every successful read*/
     while (!(ret = spng_decode_row(ctx, row, 4*width)) || lastrow && ret == SPNG_EOI || run) {
         done = ret == SPNG_EOI && !lastrow;
         lastrow = !ret;
-        for (i=0;i<4*width&&(!cfg.bytecap||i+width*rows_read<cfg.bytecap);i+=4) {
+        for (i=0;i<width&&(!cfg.bytecap||i+width*rows_read<cfg.bytecap);i+=1) {
             
             last = current;
             
             //Get next pixel
 
-            memcpy(&current,row+i,4);
+            current=row[i];
 
             //Try to make run
-            if (EQCOLOR(current,last) && (run<62 || cfg.longruns && run < 32957)) {
+            if (!done && EQCOLOR(current,last) && (run<62 || cfg.longruns && run < 32957)) {
                 run++;
                 continue;
             }
             if (run) {
-                if (run <= 62) {
-                    QOIG_PRINT(OP_RUN|(run-1));    
+                if (run <= 62 - cfg.longruns) {
+                    QOIG_PRINT(OP_RUN|(run-1));
                 } else {
                     QOIG_PRINT(OP_RUN|61);
                     run-=62;
@@ -383,7 +429,7 @@ int qoig_encode(spng_ctx *ctx, size_t width, FILE *outfile, unsigned long *outle
                 cache[colorhash] = current;
                 if (cfg.longindex) {
                     lcolorhash = LHASH(current);
-                    temp2 = longcache1[colorhash];
+                    temp2 = longcache1[lcolorhash];
                     longcache1[LHASH(temp)] = temp;
                     if (EQCOLOR(current,temp2)) {
                         QOIG_PRINT(OP_INDEX|62&OP_INDEX_ARG);
@@ -518,30 +564,71 @@ int qoig_encode(spng_ctx *ctx, size_t width, FILE *outfile, unsigned long *outle
             }
 
             //Try to make RGB or RGBA pixel
-            if (current.alpha == last.alpha) {
-                QOIG_PRINT(OP_RGB);
-                j=3;
+            //If we're buffering a pixel write, switch to raw mode and write it
+            if (cfg.rawblocks) {
+                if (rgbrun==129 || rgbrun && (bufferedrgb == OP_RGB && current.alpha!=last.alpha ||
+                    bufferedrgb == OP_RGBA && current.alpha==last.alpha)) {
+                    if (!cfg.simulate) {
+                        fprintf(outfile,"%c%c",OP_RGBRUN,rgbrun-2|(bufferedrgb&1)<<7);
+                        fwrite(rgbbuffer,1,rgbrun*(bufferedrgb-0xFB),outfile);
+                    }
+                    ct+=rgbrun*(bufferedrgb-0xFB);
+                    rgbrun=0;
+                    bufferedrgb = 0;
+                }
+                if (bufferedrgb||rgbrun) {
+                    if (bufferedrgb == OP_RGB && current.alpha!=last.alpha) {
+                        bufferedrgb = 0;
+                        QOIG_PRINT(OP_RGB);
+                        if (!cfg.simulate) {
+                            fwrite(&last,1,3,outfile);
+                        }
+                        ct+=3;
+                        bufferedrgb = OP_RGBA;
+                    } else {
+                        if (!rgbrun) {
+                            memcpy(rgbbuffer,&last,3+(bufferedrgb&1));
+                            rgbrun=1;
+                        }
+                        memcpy(rgbbuffer+(3+(bufferedrgb&1))*rgbrun,&current,3+(bufferedrgb&1));
+                        rgbrun++;
+                    }
+                } else {
+                    if (current.alpha == last.alpha) {
+                        bufferedrgb = OP_RGB;
+                    } else {
+                        bufferedrgb = OP_RGBA;
+                    }
+                }
             } else {
-                QOIG_PRINT(OP_RGBA);
-                j=4;
+                if (current.alpha == last.alpha) {
+                    QOIG_PRINT(OP_RGB);
+                    j=3;
+                } else {
+                    QOIG_PRINT(OP_RGBA);
+                    j=4;
+                }
+                if (!cfg.simulate) {
+                    fwrite(&current,1,j,outfile);
+                }
+                ct+=j;
             }
-            if (!cfg.simulate) {
-                fwrite(&current,1,j,outfile);
-            }
-            ct+=j;
             if (64-clen-2*cfg.longindex) {
                 if (cfg.longindex) {
                     temp = cache[colorhash];
-                    longcache2[LOCALHASH(temp,0,256)] = temp;
+                    if (!EQCOLOR(temp,current)) {
+                        longcache2[LOCALHASH(temp,0,256)] = temp;
+                    }
                 }
                 cache[colorhash] = current;
             }
         }
-        if (cfg.bytecap && i + rows_read*width > cfg.bytecap) break;
+        if (cfg.bytecap && 4*i + rows_read*width > cfg.bytecap) break;
         rows_read++;
     }
+    //Flush all buffers
+    QOIG_PRINT(0);
     *outlen = ct;
-    free(row);
     return 0;
 }
 
@@ -552,12 +639,13 @@ int qoig_decode(FILE *infile, size_t width, spng_ctx *ctx, size_t *outlen, qoig_
     color current = (color){.alpha=255};
     color temp;
     uint8_t cbyte = 0;
-    int i=0;
-    uint8_t j;
-    int buflen;
-    char *tempbuf;
+    uint8_t rgbrun = 0;
+    unsigned int i=0;
+    char j;
+    uint8_t m;
     uint32_t run=0;
-    char *row = malloc(cfg.channels*width);
+    uint8_t row[width*cfg.channels];
+    unsigned int rows_read = 0;
     int ret;
     int cachelengths[31] = QOIG_CACHES;
     int clen;
@@ -567,10 +655,6 @@ int qoig_decode(FILE *infile, size_t width, spng_ctx *ctx, size_t *outlen, qoig_
     }
     clen = cachelengths[cfg.clen];
     *outlen = 0;
-    if (clen) {
-        cache[HASH(current,clen)] = current;
-        if (cfg.longindex) longcache1[LHASH(current)] = current;
-    }
     if (cfg.longindex) {
         if (IS_BIG_ENDIAN) {
 			memcpy(longcache1,default_colors_be,256*sizeof(color));
@@ -580,9 +664,13 @@ int qoig_decode(FILE *infile, size_t width, spng_ctx *ctx, size_t *outlen, qoig_
             memcpy(longcache2,default_colors2_le,256*sizeof(color));
         }
     }
+    if (clen) {
+        cache[HASH(current,clen)] = current;
+        if (cfg.longindex) longcache1[LHASH(current)] = current;
+    }
     do { 
         for (i=0;i<cfg.channels*width;i+=cfg.channels) {
-            
+            j=0;
             //Add another pixel for current run
             if (run) {
                 memcpy(row+i,&current,cfg.channels);
@@ -592,7 +680,11 @@ int qoig_decode(FILE *infile, size_t width, spng_ctx *ctx, size_t *outlen, qoig_
             }
             
             //Fetch next byte
-            QOIG_READ(&cbyte,1,1,infile);
+            if (rgbrun) {
+                rgbrun--;
+            } else {
+                QOIG_READ(&cbyte,1,1,infile);
+            }
 
             //Decode next codeword
             switch (cbyte&OP_CODE) {
@@ -614,21 +706,28 @@ int qoig_decode(FILE *infile, size_t width, spng_ctx *ctx, size_t *outlen, qoig_
                     }
                     QOIG_READ(&cbyte,1,1,infile);
 
+                case OP_LUMA:
+                    if ((cbyte&OP_CODE) == OP_LUMA) {
+                        j = (cbyte&OP_LUMA_ARG)-32;
+                        QOIG_READ(&cbyte,1,1,infile);
+                        current.green += j;
+                        current.red += j+(LRS(cbyte,4)&0xF)-8;
+                        current.blue += j+(cbyte&0xF)-8;
+                        break;
+                    }
                 case OP_DIFF:
-                    if ((cbyte&OP_CODE) == OP_DIFF) {
+                    if (cfg.rawblocks && !j && cbyte == OP_RGBRUN) {
+                        QOIG_READ(&rgbrun,1,1,infile);
+                        cbyte = OP_RGB + LRS(rgbrun,7);
+                        rgbrun = (rgbrun&0x7F)+1;
+                    } else {
                         current.red += (LRS(cbyte,4)&3)-2;
                         current.green += (LRS(cbyte,2)&3)-2;
                         current.blue += (cbyte&3)-2;
                         break;
                     }
 
-                case OP_LUMA:
-                    j = (cbyte&OP_LUMA_ARG)-32;
-                    QOIG_READ(&cbyte,1,1,infile);
-                    current.green += j;
-                    current.red += j+(LRS(cbyte,4)&0xF)-8;
-                    current.blue += j+(cbyte&0xF)-8;
-                break;
+
 
                 case OP_RUN:
                     if (cbyte == OP_RGB || cbyte == OP_RGBA) {
@@ -636,7 +735,9 @@ int qoig_decode(FILE *infile, size_t width, spng_ctx *ctx, size_t *outlen, qoig_
                         if (64-clen-2*cfg.longindex) {
                             if (cfg.longindex) {
                                 temp = cache[LOCALHASH(current,clen,64-2*cfg.longindex)];
-                                longcache2[LOCALHASH(temp,0,256)] = temp;
+                                if (!EQCOLOR(temp,current)) {
+                                    longcache2[LOCALHASH(temp,0,256)] = temp;
+                                }
                             }
                             cache[LOCALHASH(current,clen,64-2*cfg.longindex)] = current;
                         }
@@ -647,25 +748,28 @@ int qoig_decode(FILE *infile, size_t width, spng_ctx *ctx, size_t *outlen, qoig_
                             if (cbyte < 128) {
                                 run+=cbyte;
                             } else {
-                                QOIG_READ(&j,1,1,infile);
-                                run+=(((cbyte&0x7F)<<8)+j+128);
+                                QOIG_READ(&m,1,1,infile);
+                                run+=(((cbyte&0x7F)<<8)+m+128);
                             }
                         }
                     }
             }
+                
             memcpy(row+i,&current,cfg.channels);
             if (clen) {
                 if (cfg.longindex) {
                     temp = cache[HASH(current,clen)];
-                    longcache1[LHASH(temp)] = temp;
+                    if (!EQCOLOR(temp,current)) {
+                        longcache1[LHASH(temp)] = temp;
+                    }
                 }
                 cache[HASH(current,clen)] = current;
-                
             }
             *outlen += cfg.channels;
         }
     
         ret = spng_encode_row(ctx,row,cfg.channels*width);
+        rows_read++;
     } while (!ret);
     //If we make it here, we're missing an end of bytestream code,
     //so there is probably something wrong with the file.
@@ -734,10 +838,11 @@ size_t qoig_write(const char *infile, const char *outfile, qoig_cfg cfg) {
     desc.channels = 3+(ihdr.color_type>>2&1);
     //since we're just converting from png, probably safe to assume sRBG colorspace
     desc.colorspace = QOIG_SRBG;
+    cfg.channels = desc.channels;
     
     if (!cfg.simulate) {
         //Write file header
-        fprintf(outf,"qoi%c", (char)(cfg.longruns<<7|(!cfg.longindex)<<6|cfg.clen+7));
+        fprintf(outf,"qoi%c", (char)(cfg.longruns<<7|(!cfg.longindex)<<6|(!cfg.rawblocks)<<5|(cfg.clen^24)));
         temp = htonl(desc.width);
         fwrite(&temp, 1, 4, outf);
         temp = htonl(desc.height);
@@ -751,7 +856,8 @@ size_t qoig_write(const char *infile, const char *outfile, qoig_cfg cfg) {
     
     if (!cfg.simulate) {
         //I have no idea what the file footer is for.
-        fwrite("\0\0\0\0\0\0\0\1",1,8,outf);
+        //Only print 7 bytes because we printed 1 coming out of qoig_encode
+        fwrite("\0\0\0\0\0\0\1",1,7,outf);
         fclose(outf);
     }
     fclose(inf);
@@ -801,9 +907,10 @@ size_t qoig_read(const char *infile, const char *outfile) {
     }
     
     //Create config
-    cfg.clen = (magic[3]&0x3F)-7;
+    cfg.clen = (magic[3]&0x1F)^24;
     cfg.longruns = magic[3]>>7;
     cfg.longindex = !(magic[3]>>6&1);
+    cfg.rawblocks = !(magic[3]>>5&1);
     cfg.channels = desc.channels;
     
 

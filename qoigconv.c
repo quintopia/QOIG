@@ -25,6 +25,7 @@ static struct argp_option options[] = {
   {"simnum", 'n', "num", OPTION_ARG_OPTIONAL, "Set number of cache lengths to test (0<=num<=31) for best compression (higher is slower)" },
   {"longruns", 'r', 0, 0, "Use extra compression on long runs"},
   {"longindex", 'i', 0, 0, "Use larger secondary color caches"},
+  {"rawblocks", 'b', 0, 0, "Allow blocks of uncompressed colors"},
   {"search", 's', 0, 0, "Search entire local cache for similar colors (slower but slight compression improvement)"},
   { 0 }
 };
@@ -33,6 +34,7 @@ struct arguments
     char *filenames[2];
     unsigned char longruns;
     unsigned char longindex;
+    unsigned char rawblocks;
     unsigned char clen;
     unsigned char simnum;
     unsigned char plainqoi;
@@ -58,6 +60,7 @@ static error_t parse_opt (int key, char *arg, struct argp_state *state) {
                 }
                 arguments->longruns = 1;
                 arguments->longindex = 1;
+                arguments->rawblocks = 1;
                 arguments->search = 1;
             }
             break;
@@ -73,6 +76,7 @@ static error_t parse_opt (int key, char *arg, struct argp_state *state) {
                 }
                 arguments->longruns = 1;
                 arguments->longindex = 1;
+                arguments->rawblocks = 1;
             }
             break;
         case 'c':
@@ -106,6 +110,9 @@ static error_t parse_opt (int key, char *arg, struct argp_state *state) {
         case 's':
             arguments->search = 1;
             break;
+        case 'b':
+            if (!arguments->plainqoi) arguments->rawblocks = 1;
+            break;
         case ARGP_KEY_ARG:
             if (state->arg_num >= 2) {
                 argp_error(state, "Too many arguments. Provide one input and one output filename.");
@@ -132,6 +139,7 @@ static error_t parse_opt (int key, char *arg, struct argp_state *state) {
                 arguments->longruns = 0;
                 arguments->simnum = 0;
                 arguments->search = 0;
+                arguments->rawblocks = 0;
             }
             break;
 
@@ -161,6 +169,7 @@ int main(int argc, char **argv) {
         cfg.searchcache = arguments.search;
         cfg.longruns = arguments.longruns;
         cfg.longindex = arguments.longindex;
+        cfg.rawblocks = arguments.rawblocks;
         bestclen = arguments.clen;
         cfg.simulate = 1;
         for (i=0;i<arguments.simnum;i++) {
