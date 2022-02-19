@@ -152,8 +152,7 @@
 #define COLORRANGES(a,b) TUBITRANGE(a.red,b.red) && \
                          TUBITRANGE(a.green,b.green) && \
                          TUBITRANGE(a.blue,b.blue)
-#define EQCOLOR(a,b) (a.red == b.red && a.green == b.green && \
-                       a.blue == b.blue && a.alpha == b.alpha)
+#define EQCOLOR(a,b) (a.rgba == b.rgba)
 #define QOIG_PRINT(b) if (bufferedrgb && !rgbrun) {\
                           if (!cfg.simulate) {\
                               fprintf(outfile,"%c",bufferedrgb);\
