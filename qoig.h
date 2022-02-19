@@ -647,9 +647,6 @@ int qoig_decode(FILE *infile, size_t width, spng_ctx *ctx, size_t *outlen, qoig_
     int cachelengths[31] = QOIG_CACHES;
     int clen;
     
-    if (!row) {
-        return -1;
-    }
     clen = cachelengths[cfg.clen];
     *outlen = 0;
     if (cfg.longindex) {
