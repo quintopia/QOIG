@@ -358,9 +358,6 @@ int qoig_encode(spng_ctx *ctx, size_t width, FILE *outfile, unsigned long *outle
     int cachelengths[31] = QOIG_CACHES;
     int clen;
     
-    if (!row) {
-        return -1;
-    }
     clen = cachelengths[cfg.clen];
     if (cfg.longindex) {
         if (IS_BIG_ENDIAN) {
