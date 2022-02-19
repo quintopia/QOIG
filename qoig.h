@@ -507,7 +507,7 @@ int qoig_encode(spng_ctx *ctx, size_t width, FILE *outfile, unsigned long *outle
                     }
                 }
                 //if we are buffering an RGB block, interrupting that to insert an long-indexed diff can cost an extra byte
-                if (cfg.longindex && !(rgbrun && bufferedrgb==OP_RGB)) {
+                if (cfg.longindex && !(rgbrun && bufferedrgb==OP_RGB && current.alpha==last.alpha)) {
                     //Try to make diff index into cache
                     m=LOCALHASH(current,0,256);
                     temp = longcache2[m];
