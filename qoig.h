@@ -1,5 +1,4 @@
 #include <stdlib.h>
-#include <string.h>
 //Fast lossless image compression and decompression based on QOI
 //https://qoiformat.org/qoi-specification.pdf
 /*While this can be use as fast streaming PNG<->QOI converter, that 
