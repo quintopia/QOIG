@@ -506,7 +506,8 @@ int qoig_encode(spng_ctx *ctx, size_t width, FILE *outfile, unsigned long *outle
                         continue;
                     }
                 }
-                if (cfg.longindex) {
+                //if we are buffering an RGB block, interrupting that to insert an long-indexed diff can cost an extra byte
+                if (cfg.longindex && !(rgbrun && bufferedrgb==OP_RGB)) {
                     //Try to make diff index into cache
                     m=LOCALHASH(current,0,256);
                     temp = longcache2[m];
@@ -546,7 +547,8 @@ int qoig_encode(spng_ctx *ctx, size_t width, FILE *outfile, unsigned long *outle
                     //Try to make luma index into cache
                     //There are no savings here if current alpha matches previous,
                     //and it's faster to just use an OP_RGB
-                    if (current.alpha != last.alpha) {
+                    //Likewise, interrupting an rgbrun for a long-indexed luma can cost an extra byte
+                    if (current.alpha != last.alpha && !rgbrun) {
                         j = current.green-temp.green;
                         if (j>-33 && j<32 && current.alpha == temp.alpha) {
                             k = current.red-temp.red-j;
