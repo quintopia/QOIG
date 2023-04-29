@@ -19,9 +19,9 @@ static char args_doc[] =
 /* The options we understand. */
 static struct argp_option options[] = {
   {"plainqoi", 'q', 0, 0, "Use options for plain backwards-compatible QOI" },
-  {"maxcomp", 'm', "clen", OPTION_ARG_OPTIONAL, "Max compression. Equiv. to -cclen -irs. If clen omitted, use -n31 (slow)." },
-  {"fast", 'f', "clen", OPTION_ARG_OPTIONAL, "Good fast compression. Equiv. to -cclen -ir. clen defaults to 26."},
-  {"cachesize", 'c', "clen", OPTION_ARG_OPTIONAL, "Set size of exact-match cache (0<=clen<=30)" },
+  {"maxcomp", 'm', "clen", OPTION_ARG_OPTIONAL, "Max compression. Equiv. to -cCLEN -irbs. If CLEN omitted, use -n31 (slow)." },
+  {"fast", 'f', "clen", OPTION_ARG_OPTIONAL, "Good fast compression. Equiv. to -cCLEN -irb. CLEN defaults to 26."},
+  {"cachesize", 'c', "clen", OPTION_ARG_OPTIONAL, "Set size of exact-match cache (0<=CLEN<=30)" },
   {"simnum", 'n', "num", OPTION_ARG_OPTIONAL, "Set number of cache lengths to test (0<=num<=31) for best compression (higher is slower)" },
   {"longruns", 'r', 0, 0, "Use extra compression on long runs"},
   {"longindex", 'i', 0, 0, "Use larger secondary color caches"},
